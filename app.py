@@ -31,8 +31,8 @@ def load_ai_model():
             url = f'https://drive.google.com/uc?id={file_id}'
             gdown.download(url, model_path, quiet=False)
             
-    # 2. Charge le modèle en mémoire
-   return tf.keras.models.load_model(model_path, safe_mode=False)
+    # 2. Charge le modèle en mémoire (avec safe_mode=False pour autoriser la couche Lambda)
+    return tf.keras.models.load_model(model_path, safe_mode=False)
 
 try:
     model = load_ai_model()
@@ -46,16 +46,20 @@ except Exception as e:
 # ==========================================
 def process_signal_to_spectrogram(signal_brut):
     """Transforme un signal 1D en spectrogramme 65x65x1 pour le CNN"""
+    # Prendre les 2048 premiers points
     if len(signal_brut) > 2048:
         signal_brut = signal_brut[:2048]
     elif len(signal_brut) < 2048:
+        # Remplissage de zéros si le signal est trop court
         signal_brut = np.pad(signal_brut, (0, 2048 - len(signal_brut)))
         
     _, _, Zxx = stft(signal_brut, fs=12000, nperseg=128, noverlap=96)
     spectro = np.abs(Zxx)
     
+    # Normalisation Min-Max
     spectro = (spectro - spectro.min()) / (spectro.max() - spectro.min() + 1e-8)
     
+    # Redimensionnement pour le modèle : (1, 65, 65, 1)
     spectro_input = np.expand_dims(spectro, axis=0)
     spectro_input = np.expand_dims(spectro_input, axis=-1)
     
@@ -93,6 +97,7 @@ signal_data = None
 if uploaded_file is not None:
     try:
         mat_data = sio.loadmat(uploaded_file)
+        # Recherche de la clé contenant les données temporelles (ex: X105_DE_time)
         time_keys = [k for k in mat_data.keys() if 'time' in k]
         if time_keys:
             signal_data = mat_data[time_keys[0]].flatten()
@@ -112,13 +117,16 @@ if signal_data is not None and modele_charge:
     col1, col2 = st.columns([1, 2])
     
     with st.spinner('Analyse par réseau de neurones en cours...'):
+        # 1. Feature Engineering
         spectro_visu, x_pred = process_signal_to_spectrogram(signal_data)
         
+        # 2. Prédiction Multi-Tâches
         preds = model.predict(x_pred)
-        pred_class = np.argmax(preds[0][0])
-        pred_fissure = preds[1][0][0]
-        pred_health = preds[2][0][0]
+        pred_class = np.argmax(preds[0][0])  # Classification
+        pred_fissure = preds[1][0][0]        # Régression Fissure
+        pred_health = preds[2][0][0]         # Régression Santé
         
+        # Dictionnaire des classes
         classes_dict = {
             0: ("Sain (Normal)", "✅", "green"),
             1: ("Défaut Bague Interne", "⚠️", "orange"),
@@ -128,12 +136,14 @@ if signal_data is not None and modele_charge:
         
         etat_texte, icone, couleur = classes_dict.get(pred_class, ("Inconnu", "❓", "gray"))
     
+    # 3. Affichage visuel des résultats
     with col1:
         st.subheader("Diagnostic Actuel")
         st.markdown(f"### {icone} {etat_texte}")
         
         st.metric(label="Diamètre de la Fissure estimé", value=f"{pred_fissure:.3f} pouces")
         
+        # Affichage de la santé sous forme de barre de progression
         health_clamped = max(0.0, min(100.0, pred_health))
         st.metric(label="Indice de Santé (SoH)", value=f"{health_clamped:.1f} %")
         st.progress(int(health_clamped) / 100)
