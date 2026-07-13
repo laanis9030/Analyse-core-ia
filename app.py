@@ -32,7 +32,7 @@ def load_ai_model():
             gdown.download(url, model_path, quiet=False)
             
     # 2. Charge le modèle en mémoire
-    return tf.keras.models.load_model(model_path)
+   return tf.keras.models.load_model(model_path, safe_mode=False)
 
 try:
     model = load_ai_model()
