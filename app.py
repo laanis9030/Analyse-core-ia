@@ -21,7 +21,7 @@ st.set_page_config(
 @st.cache_resource
 def load_ai_model():
     # Streamlit ne charge le modèle qu'une seule fois au démarrage
-    return tf.keras.models.load_model("predict_core_model.keras")
+    return tf.keras.models.load_model("models/predict_core_model.keras")
 
 try:
     model = load_ai_model()
