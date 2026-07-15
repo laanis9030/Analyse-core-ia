@@ -1,159 +1,294 @@
+# =====================================================================
+#  🛡️ ANALYSE-CORE V2 - NASA PREDICTIVE MAINTENANCE DASHBOARD (app.py)
+# =====================================================================
+
 import streamlit as st
+import torch
+import torch.nn as nn
+import torchvision.models as models
 import numpy as np
-import tensorflow as tf
-from scipy.signal import stft
-import scipy.io as sio
 import matplotlib.pyplot as plt
+from scipy import signal
 import os
 import gdown
+import torchvision.transforms as T
 
-# ==========================================
-# ⚙️ CONFIGURATION DE LA PAGE
-# ==========================================
+# 1. CONFIGURATION DE LA PAGE & THÈME
 st.set_page_config(
-    page_title="PredictCore AI | Analyse MLOps",
-    page_icon="⚙️",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="Analyse-Core v2 - NASA Diagnostic",
+    page_icon="⚡",
+    layout="wide"
 )
 
-# ==========================================
-# 🧠 TÉLÉCHARGEMENT ET CHARGEMENT DU MODÈLE
-# ==========================================
-@st.cache_resource
-def load_ai_model():
-    model_path = "predict_core_model.keras"
-    file_id = '1wYE7yoEwSSAjHqiyM2Uf8_l0xvHUGVDf' # L'ID de ton fichier sur Google Drive
-    
-    # 1. Vérifie si le modèle est déjà là. Sinon, le télécharge.
-    if not os.path.exists(model_path):
-        with st.spinner("⏳ Téléchargement du cerveau de l'IA depuis Google Drive... (Cela peut prendre 1 à 2 minutes la première fois)"):
-            url = f'https://drive.google.com/uc?id={file_id}'
-            gdown.download(url, model_path, quiet=False)
-            
-    # 2. Charge le modèle en mémoire (avec safe_mode=False pour autoriser la couche Lambda)
-    return tf.keras.models.load_model(model_path, safe_mode=False)
-
-try:
-    model = load_ai_model()
-    modele_charge = True
-except Exception as e:
-    modele_charge = False
-    st.error(f"🚨 Impossible de charger le modèle. Erreur : {e}")
-
-# ==========================================
-# 🛠️ FONCTIONS DE TRAITEMENT DU SIGNAL
-# ==========================================
-def process_signal_to_spectrogram(signal_brut):
-    """Transforme un signal 1D en spectrogramme 65x65x1 pour le CNN"""
-    # Prendre les 2048 premiers points
-    if len(signal_brut) > 2048:
-        signal_brut = signal_brut[:2048]
-    elif len(signal_brut) < 2048:
-        # Remplissage de zéros si le signal est trop court
-        signal_brut = np.pad(signal_brut, (0, 2048 - len(signal_brut)))
-        
-    _, _, Zxx = stft(signal_brut, fs=12000, nperseg=128, noverlap=96)
-    spectro = np.abs(Zxx)
-    
-    # Normalisation Min-Max
-    spectro = (spectro - spectro.min()) / (spectro.max() - spectro.min() + 1e-8)
-    
-    # Redimensionnement pour le modèle : (1, 65, 65, 1)
-    spectro_input = np.expand_dims(spectro, axis=0)
-    spectro_input = np.expand_dims(spectro_input, axis=-1)
-    
-    return spectro, spectro_input
-
-def generate_dummy_signal():
-    """Génère un faux signal bruité pour la démonstration"""
-    t = np.linspace(0, 1, 2048)
-    signal = np.sin(2 * np.pi * 50 * t) + 0.5 * np.random.randn(2048)
-    return signal
-
-# ==========================================
-# 🎨 INTERFACE UTILISATEUR (FRONTEND)
-# ==========================================
-st.title("⚙️ PredictCore AI : Diagnostic Multi-Tâches")
+# Injection CSS personnalisée pour un design Cyberpunk / Sci-Fi haut de gamme
 st.markdown("""
-Bienvenue sur le tableau de bord de maintenance prédictive. 
-Cette intelligence artificielle analyse les vibrations des roulements pour détecter simultanément :
-**Le type de défaut**, **le diamètre de la fissure**, et **l'indice de santé global**.
-""")
-
-st.sidebar.header("📁 Importation des données")
-uploaded_file = st.sidebar.file_uploader("Chargez un fichier signal (.mat)", type=["mat"])
-
-use_dummy = st.sidebar.button("Ou générer un signal de test")
-
-st.sidebar.markdown("---")
-st.sidebar.info("Modèle : Custom ResNet (4.2M Paramètres)")
-
-# ==========================================
-# 🚀 MOTEUR DE PRÉDICTION
-# ==========================================
-signal_data = None
-
-if uploaded_file is not None:
-    try:
-        mat_data = sio.loadmat(uploaded_file)
-        # Recherche de la clé contenant les données temporelles (ex: X105_DE_time)
-        time_keys = [k for k in mat_data.keys() if 'time' in k]
-        if time_keys:
-            signal_data = mat_data[time_keys[0]].flatten()
-            st.success("Fichier chargé avec succès !")
-        else:
-            st.error("Aucune donnée temporelle trouvée dans ce fichier .mat.")
-    except Exception as e:
-        st.error(f"Erreur de lecture du fichier : {e}")
-elif use_dummy:
-    signal_data = generate_dummy_signal()
-    st.info("Utilisation d'un signal de démonstration généré aléatoirement.")
-
-if signal_data is not None and modele_charge:
-    st.markdown("---")
-    st.header("📊 Résultats de l'Analyse IA")
-    
-    col1, col2 = st.columns([1, 2])
-    
-    with st.spinner('Analyse par réseau de neurones en cours...'):
-        # 1. Feature Engineering
-        spectro_visu, x_pred = process_signal_to_spectrogram(signal_data)
-        
-        # 2. Prédiction Multi-Tâches
-        preds = model.predict(x_pred)
-        pred_class = np.argmax(preds[0][0])  # Classification
-        pred_fissure = preds[1][0][0]        # Régression Fissure
-        pred_health = preds[2][0][0]         # Régression Santé
-        
-        # Dictionnaire des classes
-        classes_dict = {
-            0: ("Sain (Normal)", "✅", "green"),
-            1: ("Défaut Bague Interne", "⚠️", "orange"),
-            2: ("Défaut Bille", "🔴", "red"),
-            3: ("Défaut Bague Externe", "🚨", "red")
+    <style>
+        /* Fond global et polices */
+        .stApp {
+            background: linear-gradient(135deg, #0a0b10 0%, #12131c 100%);
+            color: #e2e8f0;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         }
         
-        etat_texte, icone, couleur = classes_dict.get(pred_class, ("Inconnu", "❓", "gray"))
-    
-    # 3. Affichage visuel des résultats
-    with col1:
-        st.subheader("Diagnostic Actuel")
-        st.markdown(f"### {icone} {etat_texte}")
+        /* Titre principal néon */
+        .neon-title {
+            font-size: 2.8rem;
+            font-weight: 800;
+            background: linear-gradient(90deg, #00f2fe 0%, #4facfe 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 20px rgba(0, 242, 254, 0.3);
+            margin-bottom: 0.5rem;
+        }
         
-        st.metric(label="Diamètre de la Fissure estimé", value=f"{pred_fissure:.3f} pouces")
+        /* Cartes de diagnostic (Glassmorphism) */
+        .diagnostic-card {
+            background: rgba(30, 41, 59, 0.45);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
         
-        # Affichage de la santé sous forme de barre de progression
-        health_clamped = max(0.0, min(100.0, pred_health))
-        st.metric(label="Indice de Santé (SoH)", value=f"{health_clamped:.1f} %")
-        st.progress(int(health_clamped) / 100)
+        /* Badge d'état de santé */
+        .badge-normal {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(5, 150, 105, 0.4) 100%);
+            border: 1px solid #10b981;
+            color: #34d399;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: bold;
+            text-align: center;
+            text-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+        }
+        .badge-warning {
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(217, 119, 6, 0.4) 100%);
+            border: 1px solid #f59e0b;
+            color: #fbbf24;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: bold;
+            text-align: center;
+            text-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+        }
+        .badge-danger {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.4) 100%);
+            border: 1px solid #ef4444;
+            color: #fca5a5;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: bold;
+            text-align: center;
+            text-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+        }
+        
+        /* Custom sidebar styling */
+        section[data-testid="stSidebar"] {
+            background-color: #0d0e15 !important;
+            border-right: 1px solid rgba(255, 255, 255, 0.05);
+        }
+    </style>
+""", unsafe_allow_html=True)
 
-    with col2:
-        st.subheader("Empreinte Vibratoire (Spectrogramme)")
-        fig, ax = plt.subplots(figsize=(6, 4))
-        cax = ax.imshow(spectro_visu, aspect='auto', origin='lower', cmap='jet')
-        ax.set_title("Transformation de Fourier à Court Terme (STFT)")
-        ax.set_xlabel("Temps")
-        ax.set_ylabel("Fréquence")
-        fig.colorbar(cax, ax=ax, label="Amplitude Nomalisée")
-        st.pyplot(fig)
+# 2. DEFINITION DE L'ARCHITECTURE DU MODÈLE
+class AnalyseCoreIMS(nn.Module):
+    def __init__(self):
+        super(AnalyseCoreIMS, self).__init__()
+        resnet = models.resnet18(weights=None)
+        self.backbone = nn.Sequential(*list(resnet.children())[:-1])
+        in_features = 512
+        
+        # Têtes Multi-Tâches
+        self.rul_head = nn.Sequential(
+            nn.Linear(in_features, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 1),
+            nn.Sigmoid()
+        )
+        self.health_head = nn.Sequential(
+            nn.Linear(in_features, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 1),
+            nn.Sigmoid()
+        )
+        self.fault_head = nn.Sequential(
+            nn.Linear(in_features, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 4)
+        )
+        
+    def forward(self, img):
+        features = self.backbone(img)
+        features = torch.flatten(features, 1)
+        return self.rul_head(features), self.health_head(features), self.fault_head(features)
+
+# 3. CHARGEMENT SÉCURISÉ DU MODÈLE VIA TON LIEN GOOGLE DRIVE
+GOOGLE_DRIVE_FILE_ID = "1BiF5lYgM7ChVaABQT3e3_stEjkugd95M"
+MODEL_LOCAL_PATH = "analyse_core_ims_v2.pt"
+
+@st.cache_resource
+def load_predictive_model():
+    if not os.path.exists(MODEL_LOCAL_PATH):
+        with st.spinner("📥 Connexion sécurisée au stockage Cloud de Google Drive..."):
+            url = f"https://drive.google.com/uc?id={GOOGLE_DRIVE_FILE_ID}"
+            try:
+                gdown.download(url, MODEL_LOCAL_PATH, quiet=False)
+            except Exception as e:
+                st.error(f"Erreur de téléchargement : {e}. Assurez-vous que le lien Drive est accessible.")
+            
+    model = AnalyseCoreIMS()
+    # Chargement sur CPU pour garantir la compatibilité complète sur Streamlit Cloud
+    model.load_state_dict(torch.load(MODEL_LOCAL_PATH, map_location=torch.device('cpu')))
+    model.eval()
+    return model
+
+# --- HEADER DE L'APPLICATION ---
+st.markdown("<h1 class='neon-title'>🛡️ ANALYSE-CORE v2</h1>", unsafe_allow_html=True)
+st.markdown("<p style='color: #8a8f98; font-size: 1.1rem; margin-top:-10px;'>Système de Diagnostic Multi-Tâches IA & Maintenance Prédictive (Dataset NASA IMS)</p>", unsafe_allow_html=True)
+st.markdown("<hr style='border: 0; height: 1px; background: linear-gradient(90deg, rgba(0,242,254,0.8), rgba(0,0,0,0)); margin-bottom: 30px;'>", unsafe_allow_html=True)
+
+# --- CONFIGURATION SIDEBAR DE CONTRÔLE ---
+st.sidebar.markdown("<h2 style='color: #00f2fe; font-size: 1.5rem; margin-bottom: 20px;'>🛠️ Salle de Contrôle</h2>", unsafe_allow_html=True)
+st.sidebar.markdown("<p style='color: #8a8f98; font-size: 0.9rem;'>Fournissez les vibrations de l'accéléromètre à analyser.</p>", unsafe_allow_html=True)
+
+option = st.sidebar.selectbox(
+    "Méthode de capture du signal",
+    ["🔄 Générer un signal physique de test", "📤 Téléverser un fichier brut (.npy, .txt)"]
+)
+
+sig = None
+
+if option == "📤 Téléverser un fichier brut (.npy, .txt)":
+    uploaded_file = st.sidebar.file_uploader("Fichier accélérométrique (min. 2048 points)", type=["npy", "txt"])
+    if uploaded_file is not None:
+        if uploaded_file.name.endswith(".npy"):
+            sig = np.load(uploaded_file)
+        else:
+            sig = np.loadtxt(uploaded_file)
+else:
+    test_type = st.sidebar.selectbox("Sélectionner une signature physique :", [
+        "Nominale (Machine Saine)", 
+        "Anomalie Bague Interne (Début d'usure)", 
+        "Défaut de Bille (Dégradation moyenne)", 
+        "Défaillance Bague Externe (État critique)"
+    ])
+    
+    if st.sidebar.button("⚡ Injecter le signal dans l'analyseur"):
+        t = np.linspace(0, 2048/20000, 2048)
+        noise = np.random.normal(0, 0.15, 2048)
+        if test_type == "Nominale (Machine Saine)":
+            sig = noise
+        elif test_type == "Anomalie Bague Interne (Début d'usure)":
+            sig = noise + 0.45 * np.sin(2 * np.pi * 120 * t) + 0.3 * np.sin(2 * np.pi * 240 * t)
+        elif test_type == "Défaut de Bille (Dégradation moyenne)":
+            sig = noise + 0.65 * np.sin(2 * np.pi * 80 * t) + 0.5 * np.sin(2 * np.pi * 160 * t)
+        else: # Défaillance Bague Externe
+            sig = noise + 1.6 * np.sin(2 * np.pi * 230 * t) + 1.2 * np.sin(2 * np.pi * 460 * t)
+        st.sidebar.success(f"Signal '{test_type}' injecté !")
+
+# --- COEUR DU PIPELINE DE TRAITEMENT ET AFFICHAGE ---
+if sig is not None:
+    if len(sig) < 2048:
+        st.error("⚠️ Erreur : Le signal doit contenir au moins 2048 points d'échantillonnage.")
+    else:
+        # Prélèvement du segment de 2048 points et normalisation
+        segment = sig[:2048]
+        segment = (segment - np.mean(segment)) / (np.std(segment) + 1e-10)
+        
+        # 1. Génération du Spectrogramme STFT de haute précision
+        f, t_spec, Sxx = signal.spectrogram(segment, fs=20000, nperseg=256, noverlap=128)
+        Sxx_db = 10 * np.log10(Sxx + 1e-10)
+        Sxx_norm = (Sxx_db - Sxx_db.min()) / (Sxx_db.max() - Sxx_db.min() + 1e-10)
+        
+        # Préparation du tenseur pour le ResNet18 [1, 3, 128, 128]
+        img_tensor = torch.tensor(Sxx_norm, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        img_tensor = T.Resize((128, 128))(img_tensor).repeat(1, 3, 1, 1)
+        
+        # 2. Inférence de l'IA
+        model = load_predictive_model()
+        with torch.no_grad():
+            pred_rul, pred_health, pred_fault = model(img_tensor)
+            
+        rul_val = pred_rul.item() * 100.0
+        health_val = pred_health.item() * 100.0
+        fault_idx = torch.argmax(pred_fault, dim=1).item()
+        
+        # 3. INTERFACE DE DIAGNOSTIC DYNAMIQUE
+        col_metrics, col_plots = st.columns([1, 1.3])
+        
+        with col_metrics:
+            st.markdown("<h3 style='color: #00f2fe; margin-bottom: 20px;'>📊 Diagnostic de l'IA</h3>", unsafe_allow_html=True)
+            
+            # Bloc d'état dynamique de la machine
+            st.markdown("<div class='diagnostic-card'>", unsafe_allow_html=True)
+            st.markdown("<p style='color: #8a8f98; margin-bottom: 5px; font-weight:600;'>CLASSIFICATION DU COMPORTEMENT</p>", unsafe_allow_html=True)
+            
+            classes = [
+                ("🟢 MACHINE SAINE", "Aucune dégradation détectée. Fonctionnement nominal de l'équipement.", "badge-normal"),
+                ("⚠️ DEFAUT BAGUE INTERNE", "Usure naissante sur la bague interne du roulement. À surveiller lors des prochains entretiens.", "badge-warning"),
+                ("⚠️ DEFAUT ELEMENTS ROULANTS (BILLES)", "Ecaillage ou micro-fissure sur une ou plusieurs billes. Surveillance renforcée.", "badge-warning"),
+                ("🚨 DEFAUT BAGUE EXTERNE (CRITIQUE)", "Défaillance structurelle majeure de la bague externe. Arrêt d'urgence de la ligne préconisé !", "badge-danger")
+            ]
+            
+            title, desc, badge_style = classes[fault_idx]
+            st.markdown(f"<div class='{badge_style}' style='font-size: 1.3rem; letter-spacing: 1px;'>{title}</div>", unsafe_allow_html=True)
+            st.markdown(f"<p style='color: #d1d5db; margin-top: 15px; font-size: 0.95rem; line-height:1.5;'>{desc}</p>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            # Blocs RUL et Etat de Santé
+            st.markdown("<div class='diagnostic-card'>", unsafe_allow_html=True)
+            
+            # Health
+            st.markdown(f"<div style='display:flex; justify-content:space-between; margin-bottom:5px;'><span style='font-weight:600; color:#e2e8f0;'>❤️ ÉTAT DE SANTÉ ACTUEL</span><span style='color:#00f2fe; font-weight:bold; font-size:1.1rem;'>{health_val:.1f}%</span></div>", unsafe_allow_html=True)
+            st.progress(health_val / 100.0)
+            
+            st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
+            
+            # RUL
+            st.markdown(f"<div style='display:flex; justify-content:space-between; margin-bottom:5px;'><span style='font-weight:600; color:#e2e8f0;'>⏳ DURÉE DE VIE UTILE RESTANTE (RUL)</span><span style='color:#f59e0b; font-weight:bold; font-size:1.1rem;'>{rul_val:.1f}%</span></div>", unsafe_allow_html=True)
+            st.progress(rul_val / 100.0)
+            
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+        with col_plots:
+            st.markdown("<h3 style='color: #00f2fe; margin-bottom: 20px;'>📈 Signaux & Spectres de Fréquence</h3>", unsafe_allow_html=True)
+            
+            # Affichage graphique haut de gamme avec Matplotlib sous thème sombre
+            plt.style.use('dark_background')
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6.5))
+            fig.patch.set_facecolor('#0a0b10')
+            
+            # Waveform
+            ax1.plot(segment[:600], color='#00f2fe', alpha=0.85, linewidth=1.5)
+            ax1.set_facecolor('#11131e')
+            ax1.set_title("VIBRATIONS BRUTES (ÉCHANTILLON TEMPOREL)", color='#8a8f98', fontsize=10, loc='left', pad=8)
+            ax1.grid(True, color='rgba(255,255,255,0.05)')
+            ax1.tick_params(colors='#8a8f98', labelsize=8)
+            
+            # Spectrogram
+            im = ax2.pcolormesh(t_spec * 1000, f, Sxx_db, shading='gouraud', cmap='magma')
+            ax2.set_facecolor('#11131e')
+            ax2.set_title("SPECTROGRAMME STFT (RÉPARTITION SPECTRO-TEMPORELLE)", color='#8a8f98', fontsize=10, loc='left', pad=8)
+            ax2.set_ylabel("Fréquence (Hz)", color='#8a8f98', fontsize=8)
+            ax2.set_xlabel("Temps (ms)", color='#8a8f98', fontsize=8)
+            ax2.tick_params(colors='#8a8f98', labelsize=8)
+            
+            # Colorbar stylisée
+            cbar = fig.colorbar(im, ax=ax2, orientation='horizontal', pad=0.2, shrink=0.7)
+            cbar.set_label("Densité de puissance (dB)", color='#8a8f98', fontsize=8)
+            cbar.ax.tick_params(labelsize=7, colors='#8a8f98')
+            
+            plt.tight_layout()
+            st.pyplot(fig)
+else:
+    # Page d'accueil lorsque aucun signal n'est encore analysé
+    st.markdown("<div class='diagnostic-card' style='text-align: center; padding: 60px 20px; border-style: dashed; border-color: rgba(0, 242, 254, 0.4);'>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#00f2fe; margin-bottom: 15px;'>📡 Système Prêt à l'Analyse</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='color: #8a8f98; font-size:1.1rem; max-width:600px; margin: 0 auto 30px auto;'>L'intelligence artificielle multi-tâches d'Analyse-Core attend de recevoir les signaux vibratoires pour démarrer le monitoring en temps réel.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color: #34d399; font-weight:bold;'>💡 Choisissez une signature dans le panneau latéral gauche et cliquez sur 'Injecter' !</p>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
